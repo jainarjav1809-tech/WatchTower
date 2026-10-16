@@ -1,12 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ["playwright"],
+  serverExternalPackages: ["playwright-core", "@sparticuz/chromium"],
 
   outputFileTracingIncludes: {
-    "/api/check": [
-      "./node_modules/playwright/**",
-      "./node_modules/playwright-core/**"
-    ]
+    "/api/check": ["./node_modules/@sparticuz/chromium/**"]
   },
 
   turbopack: {

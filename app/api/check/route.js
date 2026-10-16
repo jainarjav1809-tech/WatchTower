@@ -1,8 +1,14 @@
-import { chromium } from "playwright";
+import { chromium } from "playwright-core";
+import sparticuz from "@sparticuz/chromium";
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { mkdir } from "fs/promises";
 import path from "path";
+
+export const maxDuration = 60;
+export const runtime = "nodejs";
+
+const IS_VERCEL = Boolean(process.env.VERCEL);
 
 const BLOCK_WORDS = [
   "captcha",
@@ -79,7 +85,14 @@ export async function POST(request) {
       );
     }
 
-    browser = await chromium.launch({ headless: true });
+    browser = IS_VERCEL
+      ? await chromium.launch({
+          args: sparticuz.args,
+          executablePath: await sparticuz.executablePath(),
+          headless: true
+        })
+      : await chromium.launch({ headless: true });
+
     const page = await browser.newPage({
       viewport: { width: 1365, height: 900 }
     });
@@ -127,14 +140,18 @@ export async function POST(request) {
       .update(title + "\n" + content)
       .digest("hex");
 
-    const folder = path.join(process.cwd(), "public", "screenshots");
-    await mkdir(folder, { recursive: true });
+    let screenshot = "";
+    if (!IS_VERCEL) {
+      const folder = path.join(process.cwd(), "public", "screenshots");
+      await mkdir(folder, { recursive: true });
 
-    const fileName = `${hash.slice(0, 16)}.png`;
-    await page.screenshot({
-      path: path.join(folder, fileName),
-      fullPage: true
-    });
+      const fileName = `${hash.slice(0, 16)}.png`;
+      await page.screenshot({
+        path: path.join(folder, fileName),
+        fullPage: true
+      });
+      screenshot = `/screenshots/${fileName}`;
+    }
 
     return NextResponse.json({
       url: parsed.href,
@@ -142,7 +159,7 @@ export async function POST(request) {
       title,
       content,
       hash,
-      screenshot: `/screenshots/${fileName}`,
+      screenshot,
       checkedAt
     });
   } catch (error) {
