@@ -1,4 +1,3 @@
-
 {
   "name": "watchtower",
   "version": "0.1.0",
@@ -11,6 +10,7 @@
     "test:check": "node scripts/test-check.js"
   },
   "dependencies": {
+    "@sparticuz/chromium": "^153.0.0",
     "next": "16.4.0",
     "playwright": "^1.64.0",
     "react": "19.3.0",
