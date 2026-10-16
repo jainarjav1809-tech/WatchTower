@@ -1,11 +1,8 @@
-import { chromium as playwrightChromium } from "playwright";
-import chromium from "@sparticuz/chromium";
+import { chromium } from "playwright";
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { mkdir } from "fs/promises";
 import path from "path";
-
-export const maxDuration = 60;
 
 const BLOCK_WORDS = [
   "captcha",
@@ -52,7 +49,6 @@ export async function POST(request) {
     }
 
     let parsed;
-
     try {
       parsed = new URL(url.trim());
     } catch {
@@ -83,18 +79,7 @@ export async function POST(request) {
       );
     }
 
-    if (process.env.VERCEL) {
-      browser = await playwrightChromium.launch({
-        args: chromium.args,
-        executablePath: await chromium.executablePath(),
-        headless: true
-      });
-    } else {
-      browser = await playwrightChromium.launch({
-        headless: true
-      });
-    }
-
+    browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({
       viewport: { width: 1365, height: 900 }
     });
@@ -104,15 +89,13 @@ export async function POST(request) {
       timeout: 20000
     });
 
-    await page.waitForLoadState("networkidle", {
-      timeout: 8000
-    }).catch(() => {});
-
-    await page.waitForTimeout(2000);
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(3000);
 
     const rawText = await page.evaluate(() => document.body.innerText);
     const title = await page.title();
     const checkedAt = new Date().toISOString();
+
     const httpStatus = response ? response.status() : 0;
     const lowerText = rawText.toLowerCase();
 
@@ -144,26 +127,14 @@ export async function POST(request) {
       .update(title + "\n" + content)
       .digest("hex");
 
-    let screenshot = null;
+    const folder = path.join(process.cwd(), "public", "screenshots");
+    await mkdir(folder, { recursive: true });
 
-    if (!process.env.VERCEL) {
-      const folder = path.join(
-        process.cwd(),
-        "public",
-        "screenshots"
-      );
-
-      await mkdir(folder, { recursive: true });
-
-      const fileName = `${hash.slice(0, 16)}.png`;
-
-      await page.screenshot({
-        path: path.join(folder, fileName),
-        fullPage: true
-      });
-
-      screenshot = `/screenshots/${fileName}`;
-    }
+    const fileName = `${hash.slice(0, 16)}.png`;
+    await page.screenshot({
+      path: path.join(folder, fileName),
+      fullPage: true
+    });
 
     return NextResponse.json({
       url: parsed.href,
@@ -171,7 +142,7 @@ export async function POST(request) {
       title,
       content,
       hash,
-      screenshot,
+      screenshot: `/screenshots/${fileName}`,
       checkedAt
     });
   } catch (error) {
@@ -186,7 +157,7 @@ export async function POST(request) {
     );
   } finally {
     if (browser) {
-      await browser.close().catch(() => {});
+      await browser.close();
     }
   }
 }
