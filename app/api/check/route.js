@@ -33,6 +33,8 @@ function removeNoise(text) {
   return text
     .replace(/\b\d{1,2}:\d{2}(:\d{2})?\s?(am|pm)?\b/gi, "")
     .replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b/g, "")
+    .replace(/\b\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago\b/gi, "")
+    .replace(/\b\d+\s+points?\b/gi, "")
     .split("\n")
     .map(line => line.replace(/\s+/g, " ").trim())
     .filter(Boolean)
