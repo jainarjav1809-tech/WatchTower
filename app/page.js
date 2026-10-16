@@ -22,90 +22,83 @@ function cleanLines(text = "") {
     .map(line => line.trim())
     .filter(Boolean)
     .filter(line => !/^\d+\.$/.test(line))
-    .filter(line => !/^(hide|past|discuss)$/i.test(line))
-    .filter(line => !/^by\s+\S+\s*\|\s*hide\s*\|\s*past\s*\|\s*discuss/i.test(line))
-    .map(line =>
-      line.replace(/\s*\|\s*hide\s*\|\s*past\s*\|\s*discuss.*$/i, "").trim()
-    )
-    .filter(Boolean);
-}
-
-function similarity(a, b) {
-  const wordsA = new Set(
-    a.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-  );
-  const wordsB = new Set(
-    b.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
-  );
-
-  if (!wordsA.size || !wordsB.size) return 0;
-
-  let common = 0;
-
-  wordsA.forEach(word => {
-    if (wordsB.has(word)) common++;
-  });
-
-  return common / new Set([...wordsA, ...wordsB]).size;
+    .filter(line => !/^(hide|past|discuss)$/i.test(line));
 }
 
 function compareText(oldText = "", newText = "") {
   const oldLines = cleanLines(oldText);
   const newLines = cleanLines(newText);
 
-  const oldUsed = new Set();
-  const newUsed = new Set();
+  const n = oldLines.length;
+  const m = newLines.length;
+
+  const dp = Array.from(
+    { length: n + 1 },
+    () => new Uint32Array(m + 1)
+  );
+
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      if (oldLines[i] === newLines[j]) {
+        dp[i][j] = dp[i + 1][j + 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const matches = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < n && j < m) {
+    if (oldLines[i] === newLines[j]) {
+      matches.push({ oldIndex: i, newIndex: j });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      i++;
+    } else {
+      j++;
+    }
+  }
 
   const modified = [];
   const removed = [];
   const added = [];
 
-  oldLines.forEach((oldLine, i) => {
-    const exactIndex = newLines.findIndex(
-      (newLine, j) => !newUsed.has(j) && newLine === oldLine
-    );
+  let oldStart = 0;
+  let newStart = 0;
 
-    if (exactIndex !== -1) {
-      oldUsed.add(i);
-      newUsed.add(exactIndex);
-    }
-  });
+  function processSection(oldEnd, newEnd) {
+    const oldPart = oldLines.slice(oldStart, oldEnd);
+    const newPart = newLines.slice(newStart, newEnd);
+    const paired = Math.min(oldPart.length, newPart.length);
 
-  oldLines.forEach((oldLine, i) => {
-    if (oldUsed.has(i)) return;
-
-    let bestIndex = -1;
-    let bestScore = 0;
-
-    newLines.forEach((newLine, j) => {
-      if (newUsed.has(j)) return;
-
-      const score = similarity(oldLine, newLine);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestIndex = j;
-      }
-    });
-
-    if (bestIndex !== -1 && bestScore >= 0.45) {
+    for (let k = 0; k < paired; k++) {
       modified.push({
-        before: oldLine,
-        after: newLines[bestIndex]
+        before: oldPart[k],
+        after: newPart[k]
       });
-
-      oldUsed.add(i);
-      newUsed.add(bestIndex);
     }
-  });
 
-  oldLines.forEach((line, i) => {
-    if (!oldUsed.has(i)) removed.push(line);
-  });
+    for (let k = paired; k < oldPart.length; k++) {
+      removed.push(oldPart[k]);
+    }
 
-  newLines.forEach((line, i) => {
-    if (!newUsed.has(i)) added.push(line);
-  });
+    for (let k = paired; k < newPart.length; k++) {
+      added.push(newPart[k]);
+    }
+  }
+
+  for (const match of matches) {
+    processSection(match.oldIndex, match.newIndex);
+
+    oldStart = match.oldIndex + 1;
+    newStart = match.newIndex + 1;
+  }
+
+  processSection(n, m);
 
   return { modified, removed, added };
 }
@@ -124,7 +117,7 @@ function ChangeSection({ title, items, color, children }) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left"
+        className="flex w-full items-center justify-between bg-slate-50 px-4 py-3 text-left"
       >
         <span className={`font-semibold ${color}`}>
           {title} ({items.length})
@@ -145,13 +138,12 @@ function showDiff(diff) {
   const modified = diff.modified || [];
   const removed = diff.removed || [];
   const added = diff.added || [];
-
   const total = modified.length + removed.length + added.length;
 
   if (!total) {
     return (
       <p className="mt-3 rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
-        The page content changed, but no meaningful text differences were found.
+        No meaningful text differences were found.
       </p>
     );
   }
@@ -160,23 +152,15 @@ function showDiff(diff) {
     <div className="mt-3">
       <div className="grid grid-cols-3 gap-2">
         <div className="rounded-lg bg-blue-50 p-3 text-center">
-          <p className="text-xl font-bold text-blue-700">
-            {modified.length}
-          </p>
+          <p className="text-xl font-bold text-blue-700">{modified.length}</p>
           <p className="text-xs text-blue-700">Modified</p>
         </div>
-
         <div className="rounded-lg bg-red-50 p-3 text-center">
-          <p className="text-xl font-bold text-red-700">
-            {removed.length}
-          </p>
+          <p className="text-xl font-bold text-red-700">{removed.length}</p>
           <p className="text-xs text-red-700">Removed</p>
         </div>
-
         <div className="rounded-lg bg-green-50 p-3 text-center">
-          <p className="text-xl font-bold text-green-700">
-            {added.length}
-          </p>
+          <p className="text-xl font-bold text-green-700">{added.length}</p>
           <p className="text-xs text-green-700">Added</p>
         </div>
       </div>
@@ -187,26 +171,14 @@ function showDiff(diff) {
         color="text-blue-700"
       >
         {modified.map((item, i) => (
-          <div
-            key={`m${i}`}
-            className="grid gap-2 md:grid-cols-2"
-          >
+          <div key={`m${i}`} className="grid gap-2 md:grid-cols-2">
             <div className="min-w-0 rounded-lg bg-red-50 p-3">
-              <p className="mb-1 text-xs font-bold text-red-700">
-                BEFORE
-              </p>
-              <p className="break-words text-sm text-red-900">
-                {item.before}
-              </p>
+              <p className="mb-1 text-xs font-bold text-red-700">BEFORE</p>
+              <p className="break-words text-sm text-red-900">{item.before}</p>
             </div>
-
             <div className="min-w-0 rounded-lg bg-green-50 p-3">
-              <p className="mb-1 text-xs font-bold text-green-700">
-                AFTER
-              </p>
-              <p className="break-words text-sm text-green-900">
-                {item.after}
-              </p>
+              <p className="mb-1 text-xs font-bold text-green-700">AFTER</p>
+              <p className="break-words text-sm text-green-900">{item.after}</p>
             </div>
           </div>
         ))}
@@ -218,12 +190,8 @@ function showDiff(diff) {
         color="text-red-700"
       >
         {removed.map((line, i) => (
-          <div
-            key={`r${i}`}
-            className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900"
-          >
-            <span className="mr-2 font-bold">−</span>
-            {line}
+          <div key={`r${i}`} className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900">
+            <span className="mr-2 font-bold">−</span>{line}
           </div>
         ))}
       </ChangeSection>
@@ -234,12 +202,8 @@ function showDiff(diff) {
         color="text-green-700"
       >
         {added.map((line, i) => (
-          <div
-            key={`a${i}`}
-            className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900"
-          >
-            <span className="mr-2 font-bold">+</span>
-            {line}
+          <div key={`a${i}`} className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900">
+            <span className="mr-2 font-bold">+</span>{line}
           </div>
         ))}
       </ChangeSection>
@@ -265,7 +229,6 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem("watchtower-sites-v2");
-
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) setSites(parsed);
@@ -273,13 +236,11 @@ export default function Home() {
     } catch {
       setError("Saved data could not be loaded.");
     }
-
     setHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
-
     try {
       localStorage.setItem("watchtower-sites-v2", JSON.stringify(sites));
     } catch {
@@ -289,7 +250,7 @@ export default function Home() {
 
   function updateSite(id, patch) {
     setSites(old =>
-      old.map(site => (site.id === id ? { ...site, ...patch } : site))
+      old.map(site => site.id === id ? { ...site, ...patch } : site)
     );
   }
 
@@ -298,7 +259,6 @@ export default function Home() {
     setError("");
 
     let parsed;
-
     try {
       parsed = new URL(url.trim());
     } catch {
@@ -344,7 +304,6 @@ export default function Home() {
 
   async function checkSite(id) {
     const site = sitesRef.current.find(item => item.id === id);
-
     if (!site || checkingRef.current.has(id)) return;
 
     checkingRef.current.add(id);
@@ -430,7 +389,6 @@ export default function Home() {
       });
     } finally {
       checkingRef.current.delete(id);
-
       setCheckingIds(old => {
         const copy = { ...old };
         delete copy[id];
@@ -450,12 +408,9 @@ export default function Home() {
       sitesRef.current.forEach(site => {
         const due =
           !site.lastChecked ||
-          now - new Date(site.lastChecked).getTime() >=
-            site.interval * 60000;
+          now - new Date(site.lastChecked).getTime() >= site.interval * 60000;
 
-        if (site.monitoring && due) {
-          checkSiteRef.current(site.id);
-        }
+        if (site.monitoring && due) checkSiteRef.current(site.id);
       });
     }, 60000);
 
@@ -464,21 +419,14 @@ export default function Home() {
 
   function toggleMonitoring(id) {
     const site = sitesRef.current.find(item => item.id === id);
-
-    if (site) {
-      updateSite(id, { monitoring: !site.monitoring });
-    }
+    if (site) updateSite(id, { monitoring: !site.monitoring });
   }
 
   function removeSite(id) {
     setSites(old => old.filter(site => site.id !== id));
   }
 
-  const totalChanges = sites.reduce(
-    (sum, site) => sum + site.changes,
-    0
-  );
-
+  const totalChanges = sites.reduce((sum, site) => sum + site.changes, 0);
   const needsAttention = sites.filter(
     site => site.status === "error" || site.status === "blocked"
   ).length;
@@ -493,13 +441,8 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-5 text-slate-900 md:p-10">
-      <h1 className="text-3xl font-bold text-blue-700">
-        ◈ WatchTower
-      </h1>
-
-      <p className="mt-1 text-slate-500">
-        Know when a web page really changes.
-      </p>
+      <h1 className="text-3xl font-bold text-blue-700">◈ WatchTower</h1>
+      <p className="mt-1 text-slate-500">Know when a web page really changes.</p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {[
@@ -507,10 +450,7 @@ export default function Home() {
           ["Changes detected", totalChanges],
           ["Needs attention", needsAttention]
         ].map(([label, value]) => (
-          <div
-            key={label}
-            className="rounded-2xl border bg-white p-6 shadow-sm"
-          >
+          <div key={label} className="rounded-2xl border bg-white p-6 shadow-sm">
             <p className="text-sm text-slate-500">{label}</p>
             <p className="mt-3 text-3xl font-bold">{value}</p>
           </div>
@@ -519,7 +459,6 @@ export default function Home() {
 
       <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold">Add a website</h3>
-
         <form onSubmit={addSite} className="mt-4 space-y-3">
           <input
             value={name}
@@ -528,7 +467,6 @@ export default function Home() {
             className="w-full rounded-xl border px-4 py-3"
             required
           />
-
           <input
             value={url}
             onChange={e => setUrl(e.target.value)}
@@ -536,7 +474,6 @@ export default function Home() {
             className="w-full rounded-xl border px-4 py-3"
             required
           />
-
           <select
             value={minutes}
             onChange={e => setMinutes(e.target.value)}
@@ -548,11 +485,7 @@ export default function Home() {
               </option>
             ))}
           </select>
-
-          {error && (
-            <p className="text-sm text-red-600">{error}</p>
-          )}
-
+          {error && <p className="text-sm text-red-600">{error}</p>}
           <button className="rounded-xl bg-blue-700 px-5 py-3 font-semibold text-white">
             + Add website
           </button>
@@ -572,53 +505,34 @@ export default function Home() {
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="font-semibold">{site.name}</p>
-
-                  <p className="mt-1 break-all text-sm text-slate-500">
-                    {site.url}
-                  </p>
-
+                  <p className="mt-1 break-all text-sm text-slate-500">{site.url}</p>
                   <p className="mt-2 text-sm text-slate-500">
                     Checks every{" "}
-                    {INTERVALS.find(item => item.value === site.interval)
-                      ?.label || `${site.interval} minutes`}
+                    {INTERVALS.find(item => item.value === site.interval)?.label ||
+                      `${site.interval} minutes`}
                     {" · "}Auto-monitor:{" "}
-                    <span
-                      className={
-                        site.monitoring
-                          ? "font-semibold text-green-700"
-                          : "font-semibold"
-                      }
-                    >
+                    <span className={site.monitoring ? "font-semibold text-green-700" : "font-semibold"}>
                       {site.monitoring ? "ON" : "OFF"}
                     </span>
                   </p>
-
                   <p className="mt-1 text-sm text-slate-500">
                     Last checked: {formatTime(site.lastChecked)}
                   </p>
-
                   <p className="mt-1 text-sm text-slate-500">
-                    Last changed: {formatTime(site.lastChanged)} (
-                    {site.changes} changes)
+                    Last changed: {formatTime(site.lastChanged)} ({site.changes} changes)
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <span
-                    className={`rounded-full px-3 py-2 text-sm font-semibold ${
-                      STATUS_COLORS[site.status] || STATUS_COLORS.pending
-                    }`}
-                  >
+                  <span className={`rounded-full px-3 py-2 text-sm font-semibold ${STATUS_COLORS[site.status] || STATUS_COLORS.pending}`}>
                     {site.status.toUpperCase()}
                   </span>
-
                   <button
                     onClick={() => toggleMonitoring(site.id)}
                     className="rounded-lg border px-3 py-2 text-sm"
                   >
                     {site.monitoring ? "Pause auto" : "Enable auto"}
                   </button>
-
                   <button
                     onClick={() => checkSite(site.id)}
                     disabled={Boolean(checkingIds[site.id])}
@@ -626,7 +540,6 @@ export default function Home() {
                   >
                     {checkingIds[site.id] ? "Checking..." : "Check website"}
                   </button>
-
                   <button
                     onClick={() => removeSite(site.id)}
                     disabled={Boolean(checkingIds[site.id])}
@@ -640,18 +553,13 @@ export default function Home() {
               {site.error && (
                 <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                   Check failed: {site.error}
-                  <span className="mt-1 block text-red-600">
-                    Your last good version is kept.
-                  </span>
+                  <span className="mt-1 block text-red-600">Your last good version is kept.</span>
                 </p>
               )}
 
               {site.hash && (
                 <div className="mt-4 rounded-lg bg-slate-50 p-4">
-                  <p className="font-semibold">
-                    {site.title || "(no title)"}
-                  </p>
-
+                  <p className="font-semibold">{site.title || "(no title)"}</p>
                   {site.screenshot && (
                     <a
                       href={site.screenshot}
@@ -662,12 +570,10 @@ export default function Home() {
                       View latest screenshot
                     </a>
                   )}
-
                   <details className="mt-3">
                     <summary className="cursor-pointer text-sm font-medium text-blue-700">
                       View extracted text
                     </summary>
-
                     <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-600">
                       {site.content.slice(0, 1500)}
                     </p>
@@ -677,29 +583,18 @@ export default function Home() {
 
               <div className="mt-5 border-t pt-4">
                 <h4 className="font-semibold">Version history</h4>
-
                 {site.history.length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-500">
-                    No history yet.
-                  </p>
+                  <p className="mt-2 text-sm text-slate-500">No history yet.</p>
                 ) : (
                   site.history.map((item, i) => (
-                    <details
-                      key={`${item.time}-${i}`}
-                      className="mt-3 rounded-lg border p-3"
-                    >
+                    <details key={`${item.time}-${i}`} className="mt-3 rounded-lg border p-3">
                       <summary className="cursor-pointer">
-                        {item.type === "baseline"
-                          ? "First version saved"
-                          : "Content changed"}
-
+                        {item.type === "baseline" ? "First version saved" : "Content changed"}
                         <span className="mt-1 block text-xs text-slate-500">
                           {formatTime(item.time)}
                         </span>
                       </summary>
-
                       {item.type === "changed" && showDiff(item.diff)}
-
                       {item.screenshot && (
                         <a
                           href={item.screenshot}
