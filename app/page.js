@@ -16,245 +16,233 @@ const STATUS_COLORS = {
   pending: "bg-slate-100 text-slate-600"
 };
 
-function lcsOps(a, b) {
-  const n = a.length;
-  const m = b.length;
-  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] =
-        a[i] === b[j]
-          ? dp[i + 1][j + 1] + 1
-          : Math.max(dp[i + 1][j], dp[i][j + 1]);
-    }
-  }
-
-  const ops = [];
-  let i = 0;
-  let j = 0;
-
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      ops.push({ t: "eq", v: a[i] });
-      i++;
-      j++;
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      ops.push({ t: "del", v: a[i] });
-      i++;
-    } else {
-      ops.push({ t: "add", v: b[j] });
-      j++;
-    }
-  }
-
-  while (i < n) ops.push({ t: "del", v: a[i++] });
-  while (j < m) ops.push({ t: "add", v: b[j++] });
-
-  return ops;
+function cleanLines(text = "") {
+  return text
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => !/^\d+\.$/.test(line))
+    .filter(line => !/^(hide|past|discuss)$/i.test(line))
+    .filter(line => !/^by\s+\S+\s*\|\s*hide\s*\|\s*past\s*\|\s*discuss/i.test(line))
+    .map(line =>
+      line.replace(/\s*\|\s*hide\s*\|\s*past\s*\|\s*discuss.*$/i, "").trim()
+    )
+    .filter(Boolean);
 }
 
 function similarity(a, b) {
-  const wa = new Set(a.split(/\s+/).filter(Boolean));
-  const wb = new Set(b.split(/\s+/).filter(Boolean));
-  if (!wa.size || !wb.size) return 0;
+  const wordsA = new Set(
+    a.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+  );
+  const wordsB = new Set(
+    b.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []
+  );
+
+  if (!wordsA.size || !wordsB.size) return 0;
 
   let common = 0;
-  wa.forEach(w => {
-    if (wb.has(w)) common++;
+
+  wordsA.forEach(word => {
+    if (wordsB.has(word)) common++;
   });
 
-  return common / Math.max(wa.size, wb.size);
-}
-
-function wordDiff(oldLine, newLine) {
-  const a = oldLine.split(/(\s+)/);
-  const b = newLine.split(/(\s+)/);
-
-  if (a.length * b.length > 1000000) {
-    return {
-      oldParts: [{ text: oldLine, changed: true }],
-      newParts: [{ text: newLine, changed: true }]
-    };
-  }
-
-  const oldParts = [];
-  const newParts = [];
-
-  lcsOps(a, b).forEach(op => {
-    if (op.t === "eq") {
-      oldParts.push({ text: op.v, changed: false });
-      newParts.push({ text: op.v, changed: false });
-    } else if (op.t === "del") {
-      oldParts.push({ text: op.v, changed: true });
-    } else {
-      newParts.push({ text: op.v, changed: true });
-    }
-  });
-
-  return { oldParts, newParts };
-}
-
-function flushBlock(dels, adds, rows) {
-  if (dels.length && dels.length === adds.length) {
-    dels.forEach((line, i) => {
-      rows.push({ type: "changed", old: line, new: adds[i] });
-    });
-    return;
-  }
-
-  let nextAdd = 0;
-
-  dels.forEach(line => {
-    let best = -1;
-    let bestScore = 0;
-
-    for (let k = nextAdd; k < adds.length; k++) {
-      const score = similarity(line, adds[k]);
-      if (score > bestScore) {
-        bestScore = score;
-        best = k;
-      }
-    }
-
-    if (best >= 0 && bestScore >= 0.4) {
-      for (let k = nextAdd; k < best; k++) {
-        rows.push({ type: "added", text: adds[k] });
-      }
-      rows.push({ type: "changed", old: line, new: adds[best] });
-      nextAdd = best + 1;
-    } else {
-      rows.push({ type: "removed", text: line });
-    }
-  });
-
-  for (let k = nextAdd; k < adds.length; k++) {
-    rows.push({ type: "added", text: adds[k] });
-  }
+  return common / new Set([...wordsA, ...wordsB]).size;
 }
 
 function compareText(oldText = "", newText = "") {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
-  const rows = [];
+  const oldLines = cleanLines(oldText);
+  const newLines = cleanLines(newText);
 
-  if (oldLines.length * newLines.length > 4000000) {
-    const oldSet = new Set(oldLines);
-    const newSet = new Set(newLines);
-    oldLines
-      .filter(line => !newSet.has(line))
-      .forEach(text => rows.push({ type: "removed", text }));
-    newLines
-      .filter(line => !oldSet.has(line))
-      .forEach(text => rows.push({ type: "added", text }));
-    return { rows };
-  }
+  const oldUsed = new Set();
+  const newUsed = new Set();
 
-  let dels = [];
-  let adds = [];
+  const modified = [];
+  const removed = [];
+  const added = [];
 
-  lcsOps(oldLines, newLines).forEach(op => {
-    if (op.t === "eq") {
-      flushBlock(dels, adds, rows);
-      dels = [];
-      adds = [];
-    } else if (op.t === "del") {
-      dels.push(op.v);
-    } else {
-      adds.push(op.v);
+  oldLines.forEach((oldLine, i) => {
+    const exactIndex = newLines.findIndex(
+      (newLine, j) => !newUsed.has(j) && newLine === oldLine
+    );
+
+    if (exactIndex !== -1) {
+      oldUsed.add(i);
+      newUsed.add(exactIndex);
     }
   });
 
-  flushBlock(dels, adds, rows);
+  oldLines.forEach((oldLine, i) => {
+    if (oldUsed.has(i)) return;
 
-  return { rows };
+    let bestIndex = -1;
+    let bestScore = 0;
+
+    newLines.forEach((newLine, j) => {
+      if (newUsed.has(j)) return;
+
+      const score = similarity(oldLine, newLine);
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = j;
+      }
+    });
+
+    if (bestIndex !== -1 && bestScore >= 0.45) {
+      modified.push({
+        before: oldLine,
+        after: newLines[bestIndex]
+      });
+
+      oldUsed.add(i);
+      newUsed.add(bestIndex);
+    }
+  });
+
+  oldLines.forEach((line, i) => {
+    if (!oldUsed.has(i)) removed.push(line);
+  });
+
+  newLines.forEach((line, i) => {
+    if (!newUsed.has(i)) added.push(line);
+  });
+
+  return { modified, removed, added };
 }
 
 function formatTime(time) {
   return time ? new Date(time).toLocaleString() : "Never";
 }
 
-function Parts({ parts, markClass }) {
-  return parts.map((p, i) =>
-    p.changed ? (
-      <mark key={i} className={`rounded px-0.5 font-semibold ${markClass}`}>
-        {p.text}
-      </mark>
-    ) : (
-      <span key={i}>{p.text}</span>
-    )
+function ChangeSection({ title, items, color, children }) {
+  const [open, setOpen] = useState(true);
+
+  if (!items.length) return null;
+
+  return (
+    <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-3 bg-slate-50 px-4 py-3 text-left"
+      >
+        <span className={`font-semibold ${color}`}>
+          {title} ({items.length})
+        </span>
+        <span className="text-sm text-slate-500">
+          {open ? "Hide −" : "Show +"}
+        </span>
+      </button>
+
+      {open && <div className="space-y-2 p-3">{children}</div>}
+    </div>
   );
 }
 
 function showDiff(diff) {
-  let rows = diff && diff.rows;
+  if (!diff) return null;
 
-  if (!rows && diff) {
-    rows = [
-      ...(diff.removed || []).map(text => ({ type: "removed", text })),
-      ...(diff.added || []).map(text => ({ type: "added", text }))
-    ];
-  }
+  const modified = diff.modified || [];
+  const removed = diff.removed || [];
+  const added = diff.added || [];
 
-  if (!rows || !rows.length) {
+  const total = modified.length + removed.length + added.length;
+
+  if (!total) {
     return (
-      <p className="mt-2 text-sm text-slate-500">
-        Content changed (only the order of lines is different).
+      <p className="mt-3 rounded-lg bg-slate-50 p-4 text-sm text-slate-600">
+        The page content changed, but no meaningful text differences were found.
       </p>
     );
   }
 
-  const MAX_ROWS = 100;
-  const shown = rows.slice(0, MAX_ROWS);
-  const changedCount = rows.filter(r => r.type === "changed").length;
-  const addedCount = rows.filter(r => r.type === "added").length;
-  const removedCount = rows.filter(r => r.type === "removed").length;
-
   return (
-    <div className="mt-3 space-y-2 text-sm">
-      <p className="text-xs text-slate-500">
-        {changedCount} line(s) modified · {addedCount} added · {removedCount} removed
-      </p>
+    <div className="mt-3">
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-lg bg-blue-50 p-3 text-center">
+          <p className="text-xl font-bold text-blue-700">
+            {modified.length}
+          </p>
+          <p className="text-xs text-blue-700">Modified</p>
+        </div>
 
-      {shown.map((row, i) => {
-        if (row.type === "changed") {
-          const { oldParts, newParts } = wordDiff(row.old, row.new);
-          return (
-            <div key={i} className="space-y-1 rounded border border-slate-200 p-1">
-              <p className="break-words rounded bg-red-50 px-3 py-1 text-red-800">
-                <span className="mr-2 text-xs font-semibold uppercase">Before</span>
-                <Parts parts={oldParts} markClass="bg-red-200 text-red-900" />
+        <div className="rounded-lg bg-red-50 p-3 text-center">
+          <p className="text-xl font-bold text-red-700">
+            {removed.length}
+          </p>
+          <p className="text-xs text-red-700">Removed</p>
+        </div>
+
+        <div className="rounded-lg bg-green-50 p-3 text-center">
+          <p className="text-xl font-bold text-green-700">
+            {added.length}
+          </p>
+          <p className="text-xs text-green-700">Added</p>
+        </div>
+      </div>
+
+      <ChangeSection
+        title="Modified content"
+        items={modified}
+        color="text-blue-700"
+      >
+        {modified.map((item, i) => (
+          <div
+            key={`m${i}`}
+            className="grid gap-2 md:grid-cols-2"
+          >
+            <div className="min-w-0 rounded-lg bg-red-50 p-3">
+              <p className="mb-1 text-xs font-bold text-red-700">
+                BEFORE
               </p>
-              <p className="break-words rounded bg-green-50 px-3 py-1 text-green-800">
-                <span className="mr-2 text-xs font-semibold uppercase">After</span>
-                <Parts parts={newParts} markClass="bg-green-200 text-green-900" />
+              <p className="break-words text-sm text-red-900">
+                {item.before}
               </p>
             </div>
-          );
-        }
 
-        if (row.type === "removed") {
-          return (
-            <p key={i} className="break-words rounded bg-red-50 px-3 py-1 text-red-800">
-              <span className="mr-2 text-xs font-semibold uppercase">Removed</span>
-              {row.text}
-            </p>
-          );
-        }
+            <div className="min-w-0 rounded-lg bg-green-50 p-3">
+              <p className="mb-1 text-xs font-bold text-green-700">
+                AFTER
+              </p>
+              <p className="break-words text-sm text-green-900">
+                {item.after}
+              </p>
+            </div>
+          </div>
+        ))}
+      </ChangeSection>
 
-        return (
-          <p key={i} className="break-words rounded bg-green-50 px-3 py-1 text-green-800">
-            <span className="mr-2 text-xs font-semibold uppercase">Added</span>
-            {row.text}
-          </p>
-        );
-      })}
+      <ChangeSection
+        title="Removed content"
+        items={removed}
+        color="text-red-700"
+      >
+        {removed.map((line, i) => (
+          <div
+            key={`r${i}`}
+            className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900"
+          >
+            <span className="mr-2 font-bold">−</span>
+            {line}
+          </div>
+        ))}
+      </ChangeSection>
 
-      {rows.length > MAX_ROWS && (
-        <p className="text-xs text-slate-500">
-          ...and {rows.length - MAX_ROWS} more changes not shown.
-        </p>
-      )}
+      <ChangeSection
+        title="Added content"
+        items={added}
+        color="text-green-700"
+      >
+        {added.map((line, i) => (
+          <div
+            key={`a${i}`}
+            className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900"
+          >
+            <span className="mr-2 font-bold">+</span>
+            {line}
+          </div>
+        ))}
+      </ChangeSection>
     </div>
   );
 }
@@ -277,6 +265,7 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem("watchtower-sites-v2");
+
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) setSites(parsed);
@@ -284,11 +273,13 @@ export default function Home() {
     } catch {
       setError("Saved data could not be loaded.");
     }
+
     setHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
+
     try {
       localStorage.setItem("watchtower-sites-v2", JSON.stringify(sites));
     } catch {
@@ -297,7 +288,9 @@ export default function Home() {
   }, [sites, hydrated]);
 
   function updateSite(id, patch) {
-    setSites(old => old.map(s => (s.id === id ? { ...s, ...patch } : s)));
+    setSites(old =>
+      old.map(site => (site.id === id ? { ...site, ...patch } : site))
+    );
   }
 
   function addSite(e) {
@@ -305,6 +298,7 @@ export default function Home() {
     setError("");
 
     let parsed;
+
     try {
       parsed = new URL(url.trim());
     } catch {
@@ -319,7 +313,7 @@ export default function Home() {
 
     const cleanUrl = parsed.href.replace(/\/$/, "");
 
-    if (sites.some(s => s.url === cleanUrl)) {
+    if (sites.some(site => site.url === cleanUrl)) {
       setError("This website is already added.");
       return;
     }
@@ -349,7 +343,8 @@ export default function Home() {
   }
 
   async function checkSite(id) {
-    const site = sitesRef.current.find(s => s.id === id);
+    const site = sitesRef.current.find(item => item.id === id);
+
     if (!site || checkingRef.current.has(id)) return;
 
     checkingRef.current.add(id);
@@ -382,31 +377,44 @@ export default function Home() {
       const latest = {
         status: "ok",
         error: "",
-        lastChecked: data.checkedAt,
+        lastChecked: data.checkedAt || now,
         title: data.title,
         content: data.content,
         hash: data.hash,
-        screenshot: data.screenshot
+        screenshot: data.screenshot || ""
       };
 
       if (!site.hash) {
         updateSite(id, {
           ...latest,
           history: [
-            { time: data.checkedAt, type: "baseline", screenshot: data.screenshot }
+            {
+              time: data.checkedAt || now,
+              type: "baseline",
+              screenshot: data.screenshot || ""
+            }
           ]
         });
       } else if (site.hash === data.hash) {
-        updateSite(id, { status: "ok", error: "", lastChecked: data.checkedAt });
+        updateSite(id, {
+          status: "ok",
+          error: "",
+          lastChecked: data.checkedAt || now
+        });
       } else {
         const diff = compareText(site.content, data.content);
 
         updateSite(id, {
           ...latest,
           changes: site.changes + 1,
-          lastChanged: data.checkedAt,
+          lastChanged: data.checkedAt || now,
           history: [
-            { time: data.checkedAt, type: "changed", diff, screenshot: data.screenshot },
+            {
+              time: data.checkedAt || now,
+              type: "changed",
+              diff,
+              screenshot: data.screenshot || ""
+            },
             ...site.history
           ].slice(0, 20)
         });
@@ -422,6 +430,7 @@ export default function Home() {
       });
     } finally {
       checkingRef.current.delete(id);
+
       setCheckingIds(old => {
         const copy = { ...old };
         delete copy[id];
@@ -441,9 +450,12 @@ export default function Home() {
       sitesRef.current.forEach(site => {
         const due =
           !site.lastChecked ||
-          now - new Date(site.lastChecked).getTime() >= site.interval * 60000;
+          now - new Date(site.lastChecked).getTime() >=
+            site.interval * 60000;
 
-        if (site.monitoring && due) checkSiteRef.current(site.id);
+        if (site.monitoring && due) {
+          checkSiteRef.current(site.id);
+        }
       });
     }, 60000);
 
@@ -451,17 +463,24 @@ export default function Home() {
   }, [hydrated]);
 
   function toggleMonitoring(id) {
-    const site = sitesRef.current.find(s => s.id === id);
-    if (site) updateSite(id, { monitoring: !site.monitoring });
+    const site = sitesRef.current.find(item => item.id === id);
+
+    if (site) {
+      updateSite(id, { monitoring: !site.monitoring });
+    }
   }
 
   function removeSite(id) {
-    setSites(old => old.filter(s => s.id !== id));
+    setSites(old => old.filter(site => site.id !== id));
   }
 
-  const totalChanges = sites.reduce((sum, s) => sum + s.changes, 0);
+  const totalChanges = sites.reduce(
+    (sum, site) => sum + site.changes,
+    0
+  );
+
   const needsAttention = sites.filter(
-    s => s.status === "error" || s.status === "blocked"
+    site => site.status === "error" || site.status === "blocked"
   ).length;
 
   if (!hydrated) {
@@ -474,7 +493,10 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-5 text-slate-900 md:p-10">
-      <h1 className="text-3xl font-bold text-blue-700">◈ WatchTower</h1>
+      <h1 className="text-3xl font-bold text-blue-700">
+        ◈ WatchTower
+      </h1>
+
       <p className="mt-1 text-slate-500">
         Know when a web page really changes.
       </p>
@@ -485,7 +507,10 @@ export default function Home() {
           ["Changes detected", totalChanges],
           ["Needs attention", needsAttention]
         ].map(([label, value]) => (
-          <div key={label} className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div
+            key={label}
+            className="rounded-2xl border bg-white p-6 shadow-sm"
+          >
             <p className="text-sm text-slate-500">{label}</p>
             <p className="mt-3 text-3xl font-bold">{value}</p>
           </div>
@@ -524,7 +549,9 @@ export default function Home() {
             ))}
           </select>
 
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && (
+            <p className="text-sm text-red-600">{error}</p>
+          )}
 
           <button className="rounded-xl bg-blue-700 px-5 py-3 font-semibold text-white">
             + Add website
@@ -543,16 +570,25 @@ export default function Home() {
           sites.map(site => (
             <div key={site.id} className="mt-5 rounded-xl border p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
+                <div className="min-w-0">
                   <p className="font-semibold">{site.name}</p>
-                  <p className="mt-1 break-all text-sm text-slate-500">{site.url}</p>
+
+                  <p className="mt-1 break-all text-sm text-slate-500">
+                    {site.url}
+                  </p>
 
                   <p className="mt-2 text-sm text-slate-500">
                     Checks every{" "}
-                    {INTERVALS.find(i => i.value === site.interval)?.label ||
-                      `${site.interval} minutes`}{" "}
-                    · Auto-monitor:{" "}
-                    <span className={site.monitoring ? "font-semibold text-green-700" : "font-semibold"}>
+                    {INTERVALS.find(item => item.value === site.interval)
+                      ?.label || `${site.interval} minutes`}
+                    {" · "}Auto-monitor:{" "}
+                    <span
+                      className={
+                        site.monitoring
+                          ? "font-semibold text-green-700"
+                          : "font-semibold"
+                      }
+                    >
                       {site.monitoring ? "ON" : "OFF"}
                     </span>
                   </p>
@@ -560,13 +596,19 @@ export default function Home() {
                   <p className="mt-1 text-sm text-slate-500">
                     Last checked: {formatTime(site.lastChecked)}
                   </p>
+
                   <p className="mt-1 text-sm text-slate-500">
-                    Last changed: {formatTime(site.lastChanged)} ({site.changes} changes)
+                    Last changed: {formatTime(site.lastChanged)} (
+                    {site.changes} changes)
                   </p>
                 </div>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className={`rounded-full px-3 py-2 text-sm font-semibold ${STATUS_COLORS[site.status] || STATUS_COLORS.pending}`}>
+                  <span
+                    className={`rounded-full px-3 py-2 text-sm font-semibold ${
+                      STATUS_COLORS[site.status] || STATUS_COLORS.pending
+                    }`}
+                  >
                     {site.status.toUpperCase()}
                   </span>
 
@@ -606,7 +648,9 @@ export default function Home() {
 
               {site.hash && (
                 <div className="mt-4 rounded-lg bg-slate-50 p-4">
-                  <p className="font-semibold">{site.title || "(no title)"}</p>
+                  <p className="font-semibold">
+                    {site.title || "(no title)"}
+                  </p>
 
                   {site.screenshot && (
                     <a
@@ -623,6 +667,7 @@ export default function Home() {
                     <summary className="cursor-pointer text-sm font-medium text-blue-700">
                       View extracted text
                     </summary>
+
                     <p className="mt-2 whitespace-pre-wrap break-words text-sm text-slate-600">
                       {site.content.slice(0, 1500)}
                     </p>
@@ -634,12 +679,20 @@ export default function Home() {
                 <h4 className="font-semibold">Version history</h4>
 
                 {site.history.length === 0 ? (
-                  <p className="mt-2 text-sm text-slate-500">No history yet.</p>
+                  <p className="mt-2 text-sm text-slate-500">
+                    No history yet.
+                  </p>
                 ) : (
                   site.history.map((item, i) => (
-                    <details key={`${item.time}-${i}`} className="mt-3 rounded-lg border p-3">
+                    <details
+                      key={`${item.time}-${i}`}
+                      className="mt-3 rounded-lg border p-3"
+                    >
                       <summary className="cursor-pointer">
-                        {item.type === "baseline" ? "First version saved" : "Content changed"}
+                        {item.type === "baseline"
+                          ? "First version saved"
+                          : "Content changed"}
+
                         <span className="mt-1 block text-xs text-slate-500">
                           {formatTime(item.time)}
                         </span>
