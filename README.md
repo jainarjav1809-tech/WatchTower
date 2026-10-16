@@ -82,25 +82,6 @@ The test creates a temporary website, extracts a price of ₹499, changes it to 
 
 If the test succeeds, the terminal displays `All tests passed!`.
 
-## Manual Testing
-
-A separate HTML website named CloudNova is also available for testing WatchTower.
-
-1. Start the CloudNova website using:
-
-   ```bash
-   py -m http.server 3001
-   ```
-
-2. Open http://localhost:3001.
-3. Add this URL to WatchTower.
-4. Run the first check to save the website's current content.
-5. Open `index.html` and change some text or a price.
-6. Save the file and check the website again in WatchTower.
-7. Verify that the change appears in the version history.
-
-Keep the CloudNova server running while testing.
-
 ## Limitations
 
 - Some websites block automated requests or require CAPTCHA verification.
@@ -117,6 +98,6 @@ Keep the CloudNova server running while testing.
 
 ## Project Links
 
-**GitHub Repository:** (https://github.com/jainarjav1809-tech/WatchTower)
+**GitHub Repository:** https://github.com/jainarjav1809-tech/WatchTower
 
 **Live Website:** Add the deployed website URL here after deployment.
