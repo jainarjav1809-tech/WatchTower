@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useEffect, useRef } from "react";
@@ -21,8 +22,7 @@ function cleanLines(text = "") {
     .split("\n")
     .map(line => line.trim())
     .filter(Boolean)
-    .filter(line => !/^\d+\.$/.test(line))
-    .filter(line => !/^(hide|past|discuss)$/i.test(line));
+    .filter(line => !/^\d+\.$/.test(line));
 }
 
 function compareText(oldText = "", newText = "") {
@@ -93,7 +93,6 @@ function compareText(oldText = "", newText = "") {
 
   for (const match of matches) {
     processSection(match.oldIndex, match.newIndex);
-
     oldStart = match.oldIndex + 1;
     newStart = match.newIndex + 1;
   }
@@ -190,7 +189,10 @@ function showDiff(diff) {
         color="text-red-700"
       >
         {removed.map((line, i) => (
-          <div key={`r${i}`} className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900">
+          <div
+            key={`r${i}`}
+            className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900"
+          >
             <span className="mr-2 font-bold">−</span>{line}
           </div>
         ))}
@@ -202,7 +204,10 @@ function showDiff(diff) {
         color="text-green-700"
       >
         {added.map((line, i) => (
-          <div key={`a${i}`} className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900">
+          <div
+            key={`a${i}`}
+            className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900"
+          >
             <span className="mr-2 font-bold">+</span>{line}
           </div>
         ))}
@@ -229,6 +234,7 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem("watchtower-sites-v2");
+
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) setSites(parsed);
@@ -236,11 +242,13 @@ export default function Home() {
     } catch {
       setError("Saved data could not be loaded.");
     }
+
     setHydrated(true);
   }, []);
 
   useEffect(() => {
     if (!hydrated) return;
+
     try {
       localStorage.setItem("watchtower-sites-v2", JSON.stringify(sites));
     } catch {
@@ -259,6 +267,7 @@ export default function Home() {
     setError("");
 
     let parsed;
+
     try {
       parsed = new URL(url.trim());
     } catch {
@@ -288,6 +297,7 @@ export default function Home() {
         monitoring: true,
         status: "pending",
         error: "",
+        checkMessage: "",
         changes: 0,
         lastChecked: null,
         lastChanged: null,
@@ -304,12 +314,15 @@ export default function Home() {
 
   async function checkSite(id) {
     const site = sitesRef.current.find(item => item.id === id);
+
     if (!site || checkingRef.current.has(id)) return;
 
     checkingRef.current.add(id);
     setCheckingIds(old => ({ ...old, [id]: true }));
 
     const now = new Date().toISOString();
+
+    updateSite(id, { checkMessage: "" });
 
     try {
       const response = await fetch("/api/check", {
@@ -328,6 +341,7 @@ export default function Home() {
         updateSite(id, {
           status: data.status,
           error: data.error || "",
+          checkMessage: "",
           lastChecked: data.checkedAt || now
         });
         return;
@@ -346,6 +360,7 @@ export default function Home() {
       if (!site.hash) {
         updateSite(id, {
           ...latest,
+          checkMessage: "First version saved. Check again later to detect changes.",
           history: [
             {
               time: data.checkedAt || now,
@@ -358,13 +373,15 @@ export default function Home() {
         updateSite(id, {
           status: "ok",
           error: "",
-          lastChecked: data.checkedAt || now
+          lastChecked: data.checkedAt || now,
+          checkMessage: "No changes detected. Website content is unchanged."
         });
       } else {
         const diff = compareText(site.content, data.content);
 
         updateSite(id, {
           ...latest,
+          checkMessage: "Changes detected in website content.",
           changes: site.changes + 1,
           lastChanged: data.checkedAt || now,
           history: [
@@ -385,10 +402,12 @@ export default function Home() {
           err.name === "TypeError"
             ? "Could not reach the server. Is it running?"
             : err.message,
+        checkMessage: "",
         lastChecked: now
       });
     } finally {
       checkingRef.current.delete(id);
+
       setCheckingIds(old => {
         const copy = { ...old };
         delete copy[id];
@@ -410,7 +429,9 @@ export default function Home() {
           !site.lastChecked ||
           now - new Date(site.lastChecked).getTime() >= site.interval * 60000;
 
-        if (site.monitoring && due) checkSiteRef.current(site.id);
+        if (site.monitoring && due) {
+          checkSiteRef.current(site.id);
+        }
       });
     }, 60000);
 
@@ -419,6 +440,7 @@ export default function Home() {
 
   function toggleMonitoring(id) {
     const site = sitesRef.current.find(item => item.id === id);
+
     if (site) updateSite(id, { monitoring: !site.monitoring });
   }
 
@@ -427,6 +449,7 @@ export default function Home() {
   }
 
   const totalChanges = sites.reduce((sum, site) => sum + site.changes, 0);
+
   const needsAttention = sites.filter(
     site => site.status === "error" || site.status === "blocked"
   ).length;
@@ -459,6 +482,7 @@ export default function Home() {
 
       <div className="mt-8 rounded-2xl border bg-white p-6 shadow-sm">
         <h3 className="text-lg font-bold">Add a website</h3>
+
         <form onSubmit={addSite} className="mt-4 space-y-3">
           <input
             value={name}
@@ -467,6 +491,7 @@ export default function Home() {
             className="w-full rounded-xl border px-4 py-3"
             required
           />
+
           <input
             value={url}
             onChange={e => setUrl(e.target.value)}
@@ -474,6 +499,7 @@ export default function Home() {
             className="w-full rounded-xl border px-4 py-3"
             required
           />
+
           <select
             value={minutes}
             onChange={e => setMinutes(e.target.value)}
@@ -485,7 +511,9 @@ export default function Home() {
               </option>
             ))}
           </select>
+
           {error && <p className="text-sm text-red-600">{error}</p>}
+
           <button className="rounded-xl bg-blue-700 px-5 py-3 font-semibold text-white">
             + Add website
           </button>
@@ -506,6 +534,7 @@ export default function Home() {
                 <div className="min-w-0">
                   <p className="font-semibold">{site.name}</p>
                   <p className="mt-1 break-all text-sm text-slate-500">{site.url}</p>
+
                   <p className="mt-2 text-sm text-slate-500">
                     Checks every{" "}
                     {INTERVALS.find(item => item.value === site.interval)?.label ||
@@ -515,9 +544,11 @@ export default function Home() {
                       {site.monitoring ? "ON" : "OFF"}
                     </span>
                   </p>
+
                   <p className="mt-1 text-sm text-slate-500">
                     Last checked: {formatTime(site.lastChecked)}
                   </p>
+
                   <p className="mt-1 text-sm text-slate-500">
                     Last changed: {formatTime(site.lastChanged)} ({site.changes} changes)
                   </p>
@@ -527,12 +558,14 @@ export default function Home() {
                   <span className={`rounded-full px-3 py-2 text-sm font-semibold ${STATUS_COLORS[site.status] || STATUS_COLORS.pending}`}>
                     {site.status.toUpperCase()}
                   </span>
+
                   <button
                     onClick={() => toggleMonitoring(site.id)}
                     className="rounded-lg border px-3 py-2 text-sm"
                   >
                     {site.monitoring ? "Pause auto" : "Enable auto"}
                   </button>
+
                   <button
                     onClick={() => checkSite(site.id)}
                     disabled={Boolean(checkingIds[site.id])}
@@ -540,6 +573,7 @@ export default function Home() {
                   >
                     {checkingIds[site.id] ? "Checking..." : "Check website"}
                   </button>
+
                   <button
                     onClick={() => removeSite(site.id)}
                     disabled={Boolean(checkingIds[site.id])}
@@ -553,13 +587,29 @@ export default function Home() {
               {site.error && (
                 <p className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">
                   Check failed: {site.error}
-                  <span className="mt-1 block text-red-600">Your last good version is kept.</span>
+                  <span className="mt-1 block text-red-600">
+                    Your last good version is kept.
+                  </span>
+                </p>
+              )}
+
+              {site.checkMessage && (
+                <p className={`mt-3 rounded-lg p-3 text-sm ${
+                  site.checkMessage.startsWith("No changes")
+                    ? "bg-green-50 text-green-800"
+                    : site.checkMessage.startsWith("Changes detected")
+                      ? "bg-blue-50 text-blue-800"
+                      : "bg-slate-50 text-slate-700"
+                }`}>
+                  {site.checkMessage.startsWith("No changes") ? "✓ " : ""}
+                  {site.checkMessage}
                 </p>
               )}
 
               {site.hash && (
                 <div className="mt-4 rounded-lg bg-slate-50 p-4">
                   <p className="font-semibold">{site.title || "(no title)"}</p>
+
                   {site.screenshot && (
                     <a
                       href={site.screenshot}
@@ -570,6 +620,7 @@ export default function Home() {
                       View latest screenshot
                     </a>
                   )}
+
                   <details className="mt-3">
                     <summary className="cursor-pointer text-sm font-medium text-blue-700">
                       View extracted text
@@ -583,6 +634,7 @@ export default function Home() {
 
               <div className="mt-5 border-t pt-4">
                 <h4 className="font-semibold">Version history</h4>
+
                 {site.history.length === 0 ? (
                   <p className="mt-2 text-sm text-slate-500">No history yet.</p>
                 ) : (
@@ -594,7 +646,9 @@ export default function Home() {
                           {formatTime(item.time)}
                         </span>
                       </summary>
+
                       {item.type === "changed" && showDiff(item.diff)}
+
                       {item.screenshot && (
                         <a
                           href={item.screenshot}
