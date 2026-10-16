@@ -173,11 +173,15 @@ function showDiff(diff) {
           <div key={`m${i}`} className="grid gap-2 md:grid-cols-2">
             <div className="min-w-0 rounded-lg bg-red-50 p-3">
               <p className="mb-1 text-xs font-bold text-red-700">BEFORE</p>
-              <p className="break-words text-sm text-red-900">{item.before}</p>
+              <p className="break-words text-sm text-red-900">
+                {item.before}
+              </p>
             </div>
             <div className="min-w-0 rounded-lg bg-green-50 p-3">
               <p className="mb-1 text-xs font-bold text-green-700">AFTER</p>
-              <p className="break-words text-sm text-green-900">{item.after}</p>
+              <p className="break-words text-sm text-green-900">
+                {item.after}
+              </p>
             </div>
           </div>
         ))}
@@ -193,7 +197,8 @@ function showDiff(diff) {
             key={`r${i}`}
             className="break-words rounded-lg bg-red-50 p-3 text-sm text-red-900"
           >
-            <span className="mr-2 font-bold">−</span>{line}
+            <span className="mr-2 font-bold">−</span>
+            {line}
           </div>
         ))}
       </ChangeSection>
@@ -208,7 +213,8 @@ function showDiff(diff) {
             key={`a${i}`}
             className="break-words rounded-lg bg-green-50 p-3 text-sm text-green-900"
           >
-            <span className="mr-2 font-bold">+</span>{line}
+            <span className="mr-2 font-bold">+</span>
+            {line}
           </div>
         ))}
       </ChangeSection>
@@ -347,10 +353,12 @@ export default function Home() {
         return;
       }
 
+      const checkedAt = data.checkedAt || now;
+
       const latest = {
         status: "ok",
         error: "",
-        lastChecked: data.checkedAt || now,
+        lastChecked: checkedAt,
         title: data.title,
         content: data.content,
         hash: data.hash,
@@ -363,8 +371,11 @@ export default function Home() {
           checkMessage: "First version saved. Check again later to detect changes.",
           history: [
             {
-              time: data.checkedAt || now,
+              time: checkedAt,
               type: "baseline",
+              title: data.title || "",
+              content: data.content || "",
+              hash: data.hash || "",
               screenshot: data.screenshot || ""
             }
           ]
@@ -373,7 +384,7 @@ export default function Home() {
         updateSite(id, {
           status: "ok",
           error: "",
-          lastChecked: data.checkedAt || now,
+          lastChecked: checkedAt,
           checkMessage: "No changes detected. Website content is unchanged."
         });
       } else {
@@ -383,11 +394,14 @@ export default function Home() {
           ...latest,
           checkMessage: "Changes detected in website content.",
           changes: site.changes + 1,
-          lastChanged: data.checkedAt || now,
+          lastChanged: checkedAt,
           history: [
             {
-              time: data.checkedAt || now,
+              time: checkedAt,
               type: "changed",
+              title: data.title || "",
+              content: data.content || "",
+              hash: data.hash || "",
               diff,
               screenshot: data.screenshot || ""
             },
@@ -465,7 +479,9 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 p-5 text-slate-900 md:p-10">
       <h1 className="text-3xl font-bold text-blue-700">◈ WatchTower</h1>
-      <p className="mt-1 text-slate-500">Know when a web page really changes.</p>
+      <p className="mt-1 text-slate-500">
+        Know when a web page really changes.
+      </p>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
         {[
@@ -646,6 +662,26 @@ export default function Home() {
                           {formatTime(item.time)}
                         </span>
                       </summary>
+
+                      {item.type === "baseline" && (
+                        <div className="mt-3 rounded-lg bg-slate-50 p-4">
+                          <p className="mb-2 font-semibold text-slate-700">
+                            Original website content
+                          </p>
+
+                          <p className="whitespace-pre-wrap break-words text-sm text-slate-600">
+                            {item.content !== undefined
+                              ? item.content.slice(0, 5000)
+                              : "This older saved version does not contain a copy of the original text. New baseline checks will save it."}
+                          </p>
+
+                          {item.title && (
+                            <p className="mt-3 text-sm font-medium text-slate-700">
+                              Page title: {item.title}
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {item.type === "changed" && showDiff(item.diff)}
 
