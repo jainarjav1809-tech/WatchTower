@@ -16,24 +16,187 @@ const STATUS_COLORS = {
   pending: "bg-slate-100 text-slate-600"
 };
 
+function lcsOps(a, b) {
+  const n = a.length;
+  const m = b.length;
+  const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
+
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i][j] =
+        a[i] === b[j]
+          ? dp[i + 1][j + 1] + 1
+          : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+
+  const ops = [];
+  let i = 0;
+  let j = 0;
+
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      ops.push({ t: "eq", v: a[i] });
+      i++;
+      j++;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      ops.push({ t: "del", v: a[i] });
+      i++;
+    } else {
+      ops.push({ t: "add", v: b[j] });
+      j++;
+    }
+  }
+
+  while (i < n) ops.push({ t: "del", v: a[i++] });
+  while (j < m) ops.push({ t: "add", v: b[j++] });
+
+  return ops;
+}
+
+function similarity(a, b) {
+  const wa = new Set(a.split(/\s+/).filter(Boolean));
+  const wb = new Set(b.split(/\s+/).filter(Boolean));
+  if (!wa.size || !wb.size) return 0;
+
+  let common = 0;
+  wa.forEach(w => {
+    if (wb.has(w)) common++;
+  });
+
+  return common / Math.max(wa.size, wb.size);
+}
+
+function wordDiff(oldLine, newLine) {
+  const a = oldLine.split(/(\s+)/);
+  const b = newLine.split(/(\s+)/);
+
+  if (a.length * b.length > 1000000) {
+    return {
+      oldParts: [{ text: oldLine, changed: true }],
+      newParts: [{ text: newLine, changed: true }]
+    };
+  }
+
+  const oldParts = [];
+  const newParts = [];
+
+  lcsOps(a, b).forEach(op => {
+    if (op.t === "eq") {
+      oldParts.push({ text: op.v, changed: false });
+      newParts.push({ text: op.v, changed: false });
+    } else if (op.t === "del") {
+      oldParts.push({ text: op.v, changed: true });
+    } else {
+      newParts.push({ text: op.v, changed: true });
+    }
+  });
+
+  return { oldParts, newParts };
+}
+
+function flushBlock(dels, adds, rows) {
+  if (dels.length && dels.length === adds.length) {
+    dels.forEach((line, i) => {
+      rows.push({ type: "changed", old: line, new: adds[i] });
+    });
+    return;
+  }
+
+  let nextAdd = 0;
+
+  dels.forEach(line => {
+    let best = -1;
+    let bestScore = 0;
+
+    for (let k = nextAdd; k < adds.length; k++) {
+      const score = similarity(line, adds[k]);
+      if (score > bestScore) {
+        bestScore = score;
+        best = k;
+      }
+    }
+
+    if (best >= 0 && bestScore >= 0.4) {
+      for (let k = nextAdd; k < best; k++) {
+        rows.push({ type: "added", text: adds[k] });
+      }
+      rows.push({ type: "changed", old: line, new: adds[best] });
+      nextAdd = best + 1;
+    } else {
+      rows.push({ type: "removed", text: line });
+    }
+  });
+
+  for (let k = nextAdd; k < adds.length; k++) {
+    rows.push({ type: "added", text: adds[k] });
+  }
+}
+
 function compareText(oldText = "", newText = "") {
   const oldLines = oldText.split("\n");
   const newLines = newText.split("\n");
-  const oldSet = new Set(oldLines);
-  const newSet = new Set(newLines);
+  const rows = [];
 
-  return {
-    removed: oldLines.filter(line => !newSet.has(line)),
-    added: newLines.filter(line => !oldSet.has(line))
-  };
+  if (oldLines.length * newLines.length > 4000000) {
+    const oldSet = new Set(oldLines);
+    const newSet = new Set(newLines);
+    oldLines
+      .filter(line => !newSet.has(line))
+      .forEach(text => rows.push({ type: "removed", text }));
+    newLines
+      .filter(line => !oldSet.has(line))
+      .forEach(text => rows.push({ type: "added", text }));
+    return { rows };
+  }
+
+  let dels = [];
+  let adds = [];
+
+  lcsOps(oldLines, newLines).forEach(op => {
+    if (op.t === "eq") {
+      flushBlock(dels, adds, rows);
+      dels = [];
+      adds = [];
+    } else if (op.t === "del") {
+      dels.push(op.v);
+    } else {
+      adds.push(op.v);
+    }
+  });
+
+  flushBlock(dels, adds, rows);
+
+  return { rows };
 }
 
 function formatTime(time) {
   return time ? new Date(time).toLocaleString() : "Never";
 }
 
+function Parts({ parts, markClass }) {
+  return parts.map((p, i) =>
+    p.changed ? (
+      <mark key={i} className={`rounded px-0.5 font-semibold ${markClass}`}>
+        {p.text}
+      </mark>
+    ) : (
+      <span key={i}>{p.text}</span>
+    )
+  );
+}
+
 function showDiff(diff) {
-  if (!diff || (!diff.removed.length && !diff.added.length)) {
+  let rows = diff && diff.rows;
+
+  if (!rows && diff) {
+    rows = [
+      ...(diff.removed || []).map(text => ({ type: "removed", text })),
+      ...(diff.added || []).map(text => ({ type: "added", text }))
+    ];
+  }
+
+  if (!rows || !rows.length) {
     return (
       <p className="mt-2 text-sm text-slate-500">
         Content changed (only the order of lines is different).
@@ -41,18 +204,57 @@ function showDiff(diff) {
     );
   }
 
+  const MAX_ROWS = 100;
+  const shown = rows.slice(0, MAX_ROWS);
+  const changedCount = rows.filter(r => r.type === "changed").length;
+  const addedCount = rows.filter(r => r.type === "added").length;
+  const removedCount = rows.filter(r => r.type === "removed").length;
+
   return (
-    <div className="mt-3 space-y-1 text-sm">
-      {diff.removed.map((line, i) => (
-        <p key={`r${i}`} className="break-words rounded bg-red-50 px-3 py-1 text-red-800">
-          − {line}
+    <div className="mt-3 space-y-2 text-sm">
+      <p className="text-xs text-slate-500">
+        {changedCount} line(s) modified · {addedCount} added · {removedCount} removed
+      </p>
+
+      {shown.map((row, i) => {
+        if (row.type === "changed") {
+          const { oldParts, newParts } = wordDiff(row.old, row.new);
+          return (
+            <div key={i} className="space-y-1 rounded border border-slate-200 p-1">
+              <p className="break-words rounded bg-red-50 px-3 py-1 text-red-800">
+                <span className="mr-2 text-xs font-semibold uppercase">Before</span>
+                <Parts parts={oldParts} markClass="bg-red-200 text-red-900" />
+              </p>
+              <p className="break-words rounded bg-green-50 px-3 py-1 text-green-800">
+                <span className="mr-2 text-xs font-semibold uppercase">After</span>
+                <Parts parts={newParts} markClass="bg-green-200 text-green-900" />
+              </p>
+            </div>
+          );
+        }
+
+        if (row.type === "removed") {
+          return (
+            <p key={i} className="break-words rounded bg-red-50 px-3 py-1 text-red-800">
+              <span className="mr-2 text-xs font-semibold uppercase">Removed</span>
+              {row.text}
+            </p>
+          );
+        }
+
+        return (
+          <p key={i} className="break-words rounded bg-green-50 px-3 py-1 text-green-800">
+            <span className="mr-2 text-xs font-semibold uppercase">Added</span>
+            {row.text}
+          </p>
+        );
+      })}
+
+      {rows.length > MAX_ROWS && (
+        <p className="text-xs text-slate-500">
+          ...and {rows.length - MAX_ROWS} more changes not shown.
         </p>
-      ))}
-      {diff.added.map((line, i) => (
-        <p key={`a${i}`} className="break-words rounded bg-green-50 px-3 py-1 text-green-800">
-          + {line}
-        </p>
-      ))}
+      )}
     </div>
   );
 }
